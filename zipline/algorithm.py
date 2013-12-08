@@ -380,8 +380,10 @@ class TradingAlgorithm(object):
         for name, value in kwargs.items():
             self._recorded_vars[name] = value
 
-    def order(self, sid, amount, limit_price=None, stop_price=None):
-        return self.blotter.order(sid, amount, limit_price, stop_price)
+    def order(self, sid, amount, limit_price=None, stop_price=None,
+              trailing_amount=None):
+        return self.blotter.order(sid, amount, limit_price, stop_price,
+                                  trailing_amount)
 
     def order_value(self, sid, value, limit_price=None, stop_price=None):
         """

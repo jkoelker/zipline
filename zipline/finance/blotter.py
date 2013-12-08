@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import math
+import operator
 import uuid
 
 from copy import copy
@@ -84,7 +85,8 @@ class Blotter(object):
     def set_date(self, dt):
         self.current_dt = dt
 
-    def order(self, sid, amount, limit_price, stop_price, order_id=None):
+    def order(self, sid, amount, limit_price, stop_price, trailing_amount,
+              order_id=None):
 
         # something could be done with amount to further divide
         # between buy by share count OR buy shares up to a dollar amount
@@ -97,6 +99,8 @@ class Blotter(object):
         Limit order:     order(sid, amount, limit_price)
         Stop order:      order(sid, amount, None, stop_price)
         StopLimit order: order(sid, amount, limit_price, stop_price)
+        TrailingStop order: order(sid, amount, None, initial_stop_price,
+                                  trailing_amount)
         """
 
         # Fractional shares are not supported.
@@ -117,6 +121,10 @@ class Blotter(object):
             raise OverflowError("Can't order more than %d shares" %
                                 self.max_shares)
 
+        if trailing_amount and not stop_price:
+            log.debug("Requested a trailing stop without initial stop price")
+            return
+
         if limit_price:
             limit_price = round_for_minimum_price_variation(limit_price,
                                                             amount > 0)
@@ -126,7 +134,8 @@ class Blotter(object):
             amount=amount,
             stop=stop_price,
             limit=limit_price,
-            id=order_id
+            id=order_id,
+            trailing_amount=trailing_amount
         )
 
         self.open_orders[order.sid].append(order)
@@ -218,7 +227,7 @@ class Blotter(object):
 
 class Order(object):
     def __init__(self, dt, sid, amount, stop=None, limit=None, filled=0,
-                 commission=None, id=None):
+                 commission=None, id=None, trailing_amount=None):
         """
         @dt - datetime.datetime that the order was placed
         @sid - stock sid of the order
@@ -238,6 +247,7 @@ class Order(object):
         self._cancelled = False
         self.stop = stop
         self.limit = limit
+        self.trailing_amount = trailing_amount
         self.stop_reached = False
         self.limit_reached = False
         self.direction = math.copysign(1, self.amount)
@@ -273,6 +283,21 @@ class Order(object):
         if sl_stop_reached:
             # Change the STOP LIMIT order into a LIMIT order
             self.stop = None
+
+        # Adjust stop or limit price
+        if self.trailing_amount is not None:
+            # This is for a SHORT position
+            if self.amount > 0:
+                proposed = event.price + self.trailing_amount
+                op = operator.lt
+
+            # This is for a LONG position
+            else:
+                proposed = event.price - self.trailing_amount
+                op = operator.gt
+
+            if op(proposed, self.stop):
+                self.stop = proposed
 
     def handle_split(self, split_event):
         ratio = split_event.ratio
